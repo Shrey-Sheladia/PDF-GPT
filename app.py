@@ -7,6 +7,7 @@ from langchain.vectorstores import FAISS
 from langchain.chains.question_answering import load_qa_chain
 from langchain.llms import OpenAI
 from langchain.callbacks import get_openai_callback
+from Utils import *
 
 
 def main():
@@ -16,48 +17,26 @@ def main():
     
     # upload file
     pdf = st.file_uploader("Upload your PDF", type="pdf")
-    
-    # extract the text
+
     if pdf is not None:
-      pdf_reader = PdfReader(pdf)
-      text = ""
-      for page in pdf_reader.pages:
-        text += page.extract_text()
+        if 'knowledge_base' not in st.session_state or str(st.session_state.pdf) != str(pdf):
+            print(str(st.session_state.pdf) == str(pdf) if "pdf" in st.session_state else print("No PDF"))
+            print(st.session_state.pdf,pdf, sep = "\n")
+            print(st.session_state)
+            # Create Knowledge base
+            st.session_state.pdf = pdf
+            st.session_state.knowledge_base = create_knowledge_base_from_pdf(pdf)
         
-      # split into chunks
-      text_splitter = CharacterTextSplitter(
-        separator="\n",
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len
-      )
-      chunks = text_splitter.split_text(text)
-      print("_"*50, "Chunks complete")
-      
-      # create embeddings
-      embeddings = OpenAIEmbeddings()
-      print("_"*50, "Embeddings 1 complete")
-      knowledge_base = FAISS.from_texts(chunks, embeddings)
-      print("_"*50, "Embeddings 2 complete")
-      
-      # show user input
-      user_question = st.text_input("Ask a question about your PDF:")
-      if user_question:
-        docs = knowledge_base.similarity_search(user_question)
-        for i, doc in enumerate(docs):
-           print(i, doc)
-           print("\n\n\n")
-        print("_"*50, "Got Docs ")
-        
-        llm = OpenAI()
-        chain = load_qa_chain(llm, chain_type="stuff")
-        print("_"*50, "Chain complete")
-        with get_openai_callback() as cb:
-          response = chain.run(input_documents=docs, question=user_question)
-          print("_"*50, "Response complete")
-          print(cb)
-           
-        st.write(response)
+
+        answer = st.empty()
+        # show user input
+        user_question = st.text_input("Ask a question about your PDF:")
+        if user_question:
+
+            response, cb = get_response(user_question, st.session_state.knowledge_base)
+            print(cb)
+                
+            answer.write(response)
     
 
 if __name__ == '__main__':
