@@ -9,10 +9,10 @@ hide_streamlit_style = """
             """
 
 
-st.set_page_config(page_title="Ask your PDF")
+st.set_page_config(page_title="PDF GPT")
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-st.header("Ask your PDF 💬")
+st.header("Talk with your PDF! 💬")
 
 # upload file
 pdf = st.file_uploader("Upload your PDF", type="pdf")
