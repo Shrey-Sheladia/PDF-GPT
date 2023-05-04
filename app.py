@@ -1,7 +1,3 @@
-try:
-    from dotenv import load_dotenv
-except:
-    pass
 import streamlit as st
 from Utils import *
 
@@ -12,7 +8,7 @@ hide_streamlit_style = """
             </style>
             """
 
-load_dotenv()
+
 st.set_page_config(page_title="Ask your PDF")
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 

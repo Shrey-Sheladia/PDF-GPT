@@ -1,4 +1,7 @@
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except:
+    pass
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
@@ -8,6 +11,7 @@ from langchain.chains.question_answering import load_qa_chain
 from langchain.llms import OpenAI
 from langchain.callbacks import get_openai_callback
 
+load_dotenv()
 def get_chunks(pdf_file):
     print("Creating Chunks")
     pdf_reader = PdfReader(pdf_file)
