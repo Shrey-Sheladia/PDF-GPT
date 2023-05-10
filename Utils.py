@@ -78,7 +78,7 @@ def merge_faiss_indices_from_pdf(pdf_path, existing_index_path):
     # Return the combined index
     return combined_index
 
-    
+
 
 
 
