@@ -16,7 +16,7 @@ st.header("Talk with your PDF! 💬")
 
 # upload file
 pdf = st.file_uploader("Upload your PDF", type="pdf")
- 
+
 if pdf is not None:
     if 'knowledge_base' not in st.session_state or str(st.session_state.pdf) != str(pdf):
 
