@@ -35,3 +35,22 @@ if pdf is not None:
             
         answer.write(response)
     
+def merge_faiss_indices_from_pdf(pdf_path, existing_index_path):
+    # Load existing index
+    existing_index = faiss.read_index(existing_index_path)
+
+    # Create new index from PDF
+    chunks = get_chunks(pdf_path)
+    embeddings = OpenAIEmbeddings()
+    new_index = FAISS.from_texts(chunks, embeddings)
+
+    # Merge the new index into the existing index
+    combined_index = faiss.IndexFlatIP(existing_index.d + new_index.d)
+    faiss.merge_into_lattice(existing_index, new_index, combined_index)
+
+    # Save the combined index to disk
+    faiss.write_index(combined_index, existing_index_path)
+
+    # Return the combined index
+    return combined_index
+
