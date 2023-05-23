@@ -6,6 +6,7 @@ import pinecone
 import openai
 import os
 import pprint 
+import chardet
 pp = pprint.PrettyPrinter(indent=4)
 from uuid import uuid4
 try:
@@ -70,7 +71,7 @@ def ingest_text(text, doc_name, cluster_name, index_name):
     # Split the text into chunks
     text_chunks = text_splitter.split_text(text)
 
-    batchSize = 100
+    batchSize = 10
 
     texts, metadatas = [], []
 
@@ -111,21 +112,44 @@ def query_index(query, cluster_name, index_name, metadata=None):
     response = vectorstore.similarity_search(
         query,  # our search query
     )
-    for res in response[0]:
-        pp.pprint(response)
-        print("\n\n\n\n\n")
+    for res in response:
+        print(f"Chunk: {res.metadata['chunk_num']}")
+        print(f"Content:\n{res.page_content}")
+        print("\n---\n")
     
     print("_"*200)
 
 
-   
 
 
-# with open('largeText.txt', 'r') as file:
-#     # Read the entire content of the file
-#     content = file.read()
-#     # Print the content
-#     ingest_text(content, "PercyJackson", "Trials", "test-index")
+input_file1 = 'Book 3 - The Prisoner of Azkaban.txt' 
+input_file = 'textDocs/' + input_file1
 
-question = "Who is Percy Jackson?"
-query_index(question, "Trials", "test-index")
+with open(input_file, "rb") as f:
+    encoding = chardet.detect(f.read())["encoding"]
+with open(input_file, "r", encoding=encoding) as f:
+    txt = f.read()
+    ingest_text(txt, input_file1, "Trials", "test-index")
+
+
+
+# question = "What is Percy's relationship with his father?"
+# query_index(question, "Trials", "test-index")
+
+
+system_message = '''
+REPLY AS A PYTHON DICTIONARY! 
+You are a chat assistant that will create answers based on the information provided. 
+
+The message will contain the Query, followed by the context. This will state the "chunk_num" followed by the chunk content. You will only use the information provided in these chunks/messages to create your response. You do not need to use all of the information provided, just what you think is relevant to the query. Do not add unnecessary details. You can also use markdown formatting if required for a better layout.
+Your response should be in the form of a Python dictionary, with one key being "reply" with your response, and the other being "source" which will have a list as the value. This list should contain all the chunk numbers from which you used information/facts to formulate your answer. 
+The response should look like this:
+{"Reply": "Your answer here", "Source": [0.0, 1.0]} (This is just an example)
+The user should be able to read that chunk to check the response.
+
+If the context/information provided by the user does not have enough information related to the Query, you will respond stating that.
+
+REPLY AS A PYTHON DICTIONARY! 
+
+
+'''
