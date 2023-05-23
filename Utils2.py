@@ -5,6 +5,8 @@ from langchain.vectorstores import Pinecone
 import pinecone
 import openai
 import os
+import time
+import sys
 import pprint 
 import chardet
 pp = pprint.PrettyPrinter(indent=4)
@@ -25,6 +27,11 @@ print(OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_ENV)
 
 print("D")
 
+
+def get_size(obj):
+    """Get size of an object in bytes"""
+    return sys.getsizeof(obj)
+
 # Function to calculate token length using tiktoken
 def tiktoken_len(text):
     tokenizer = tiktoken.get_encoding('cl100k_base')
@@ -34,7 +41,7 @@ def tiktoken_len(text):
 # Function to split the text using langchain's RecursiveCharacterTextSplitter
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=400,
+    chunk_size=250,
     chunk_overlap=20,
     length_function=tiktoken_len,
     separators=["\n\n", "\n", " ", ""]
@@ -46,6 +53,58 @@ model_name = 'text-embedding-ada-002'
 embed = OpenAIEmbeddings(
     model=model_name,
     openai_api_key=OPENAI_API_KEY)
+
+
+
+def upsert_vecs(text, doc_name, cluster_name, index_name):
+    batch_limit = 100
+
+    texts = []
+    metadatas = []
+
+    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+    print("Initialized Pinecone Database...")
+
+    if index_name not in pinecone.list_indexes():
+        pinecone.create_index(
+            name=index_name,
+            metric='dotproduct',
+            dimension=1536  # 1536 dim of text-embedding-ada-002
+        )
+    index = pinecone.Index(index_name)
+
+    metadata = {
+        "doc_name": doc_name,
+        "cluster_name": cluster_name
+    }
+
+    record_texts = text_splitter.split_text(text)
+    record_metadatas = []
+
+    for j, text in enumerate(record_texts):
+        record_metadatas.append({"chunk": j, "text": text, **metadata})
+
+        texts.extend(record_texts)
+        metadatas.extend(record_metadatas)
+
+        if len(texts) >= batch_limit:
+            print("1 Upserting...")
+            ids = [str(uuid4()) for _ in range(len(texts))]
+            embeds = embed.embed_documents(texts)
+            index.upsert(vectors=zip(ids, embeds, metadatas))
+            texts = []
+            metadatas = []
+            print("1 Upserted!")
+
+    if len(texts) > 0:
+        print("1 Upserting...")
+        ids = [str(uuid4()) for _ in range(len(texts))]
+        embeds = embed.embed_documents(texts)
+        index.upsert(vectors=zip(ids, embeds, metadatas))
+        print("1 Upserted!")
+
+
+
 
 
 
@@ -84,15 +143,19 @@ def ingest_text(text, doc_name, cluster_name, index_name):
 
     texts.extend(text_chunks)
     metadatas.extend(chunk_metadata)
+    batch_size_bytes =  get_size(metadatas)
 
-    if len(texts) >= batchSize:
-        print("upserting")
+    if batch_size_bytes > 2*1024*800:  # 2MB limit:
+        print("1 upserting")
         ids = [str(uuid4()) for _ in range(len(texts))]
         embeds = embed.embed_documents(texts)
+        print(f"SIZE: {get_size(str(ids)) + get_size(str(embeds)) + get_size(str(metadatas))}")
+        print("SLEEPINGGGGGGGGGGGGGGGGG")
+        time.sleep(3)
         index.upsert(vectors=zip(ids, embeds, metadatas))
         texts = []
         metadatas = []
-        print("upserted")
+        print("1mupserted")
     
     if len(texts) > 0:
         print("upserting")
@@ -129,7 +192,7 @@ with open(input_file, "rb") as f:
     encoding = chardet.detect(f.read())["encoding"]
 with open(input_file, "r", encoding=encoding) as f:
     txt = f.read()
-    ingest_text(txt, input_file1, "Trials", "test-index")
+    upsert_vecs(txt, input_file1, "Trials", "test-index")
 
 
 
