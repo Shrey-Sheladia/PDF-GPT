@@ -41,7 +41,7 @@ def tiktoken_len(text):
 # Function to split the text using langchain's RecursiveCharacterTextSplitter
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=250,
+    chunk_size=400,
     chunk_overlap=20,
     length_function=tiktoken_len,
     separators=["\n\n", "\n", " ", ""]
@@ -57,7 +57,8 @@ embed = OpenAIEmbeddings(
 
 
 def upsert_vecs(text, doc_name, cluster_name, index_name):
-    batch_limit = 100
+    completed = 0
+    batch_limit = 400
 
     texts = []
     metadatas = []
@@ -84,17 +85,19 @@ def upsert_vecs(text, doc_name, cluster_name, index_name):
     for j, text in enumerate(record_texts):
         record_metadatas.append({"chunk": j, "text": text, **metadata})
 
-        texts.extend(record_texts)
+        texts.extend(text)
         metadatas.extend(record_metadatas)
 
+        print(j, len(texts), text[:50])
+
         if len(texts) >= batch_limit:
-            print("1 Upserting...")
             ids = [str(uuid4()) for _ in range(len(texts))]
             embeds = embed.embed_documents(texts)
             index.upsert(vectors=zip(ids, embeds, metadatas))
             texts = []
             metadatas = []
-            print("1 Upserted!")
+        
+        print(f"{j}/{len(record_texts)} completed....")
 
     if len(texts) > 0:
         print("1 Upserting...")
@@ -102,6 +105,8 @@ def upsert_vecs(text, doc_name, cluster_name, index_name):
         embeds = embed.embed_documents(texts)
         index.upsert(vectors=zip(ids, embeds, metadatas))
         print("1 Upserted!")
+
+    
 
 
 
@@ -176,7 +181,7 @@ def query_index(query, cluster_name, index_name, metadata=None):
         query,  # our search query
     )
     for res in response:
-        print(f"Chunk: {res.metadata['chunk_num']}")
+        print(f"Chunk: {res.metadata['chunk']}")
         print(f"Content:\n{res.page_content}")
         print("\n---\n")
     
@@ -196,8 +201,8 @@ with open(input_file, "r", encoding=encoding) as f:
 
 
 
-# question = "What is Percy's relationship with his father?"
-# query_index(question, "Trials", "test-index")
+question = "Who is Harry?"
+query_index(question, "Trials", "test-index")
 
 
 system_message = '''
