@@ -11,6 +11,9 @@ import pprint
 import chardet
 pp = pprint.PrettyPrinter(indent=4)
 from uuid import uuid4
+from sentence_transformers import SentenceTransformer
+import json
+
 try:
     from dotenv import load_dotenv
 except:
@@ -24,21 +27,14 @@ PINECONE_API_KEY = os.getenv('PINECONE_API_KEY')
 PINECONE_ENV = os.getenv('PINECONE_ENV')
 
 print(OPENAI_API_KEY, PINECONE_API_KEY, PINECONE_ENV)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 
-print("D")
 
-
-def get_size(obj):
-    """Get size of an object in bytes"""
-    return sys.getsizeof(obj)
-
-# Function to calculate token length using tiktoken
 def tiktoken_len(text):
     tokenizer = tiktoken.get_encoding('cl100k_base')
     tokens = tokenizer.encode(text, disallowed_special=())
     return len(tokens)
 
-# Function to split the text using langchain's RecursiveCharacterTextSplitter
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=400,
@@ -46,178 +42,235 @@ text_splitter = RecursiveCharacterTextSplitter(
     length_function=tiktoken_len,
     separators=["\n\n", "\n", " ", ""]
 )
-    
 
-# Function to convert text to embeddings using OpenAI's 'text-embedding-ada-002' model
 model_name = 'text-embedding-ada-002'
 embed = OpenAIEmbeddings(
     model=model_name,
     openai_api_key=OPENAI_API_KEY)
 
 
+def getIds(texts):
+    ids = [str(uuid4()) for _ in range(len(texts))]
+    return ids
 
-def upsert_vecs(text, doc_name, cluster_name, index_name):
-    completed = 0
-    batch_limit = 400
+def get_embeddings(texts, open_source=True):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
 
-    texts = []
-    metadatas = []
+    if open_source:
+        return model.encode(texts)
 
-    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-    print("Initialized Pinecone Database...")
+    return embed.embed_documents(texts)
+
+
+def get_query_embeddings(texts, open_source=True):
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+
+    if open_source:
+        return [float(x) for x in model.encode(texts)]
+
+    return embed.embed_documents(texts)
+
+def split_texts(text):
+    record_texts = text_splitter.split_text(text)
+
+    return record_texts
+
+
+def upsert_text(doc_name, cluster_name, index_name):
+
+    # input_file = "largeText.txt"
+
+    input_file = doc_name
+
+    with open(input_file, "rb") as f:
+        encoding = chardet.detect(f.read())["encoding"]
+    with open(input_file, "r", encoding=encoding) as f:
+        text = f.read()
+
+    batch_limit = 100
+    batch_texts, batch_metadatas = [], []
+
+
+    # doc_name, cluster_name, index_name = input_file1, "Trials", "open-source-index"
 
     if index_name not in pinecone.list_indexes():
-        pinecone.create_index(
-            name=index_name,
-            metric='dotproduct',
-            dimension=1536  # 1536 dim of text-embedding-ada-002
-        )
+            pinecone.create_index(
+                name=index_name,
+                metric='dotproduct',
+                dimension=1536  # 1536 dim of text-embedding-ada-002
+            )
     index = pinecone.Index(index_name)
 
-    metadata = {
-        "doc_name": doc_name,
-        "cluster_name": cluster_name
-    }
-
-    record_texts = text_splitter.split_text(text)
+    doc_metadata = {
+            "doc_name": doc_name,
+            "cluster_name": cluster_name
+        }
+    
+    all_texts = split_texts(text)
     record_metadatas = []
 
-    for j, text in enumerate(record_texts):
-        record_metadatas.append({"chunk": j, "text": text, **metadata})
+    BATCHES = []
+    SingleBatch = []
+    Batch_Embedding = []
 
-        texts.extend(text)
-        metadatas.extend(record_metadatas)
+    for j, text in enumerate(all_texts):
+        print(j, end = ", ")
 
-        print(j, len(texts), text[:50])
+        # print(all_texts)
 
-        if len(texts) >= batch_limit:
-            ids = [str(uuid4()) for _ in range(len(texts))]
-            embeds = embed.embed_documents(texts)
-            index.upsert(vectors=zip(ids, embeds, metadatas))
-            texts = []
-            metadatas = []
-        
-        print(f"{j}/{len(record_texts)} completed....")
+        chunk_metadata = {"chunk": j, "text": text, **doc_metadata}
 
-    if len(texts) > 0:
-        print("1 Upserting...")
-        ids = [str(uuid4()) for _ in range(len(texts))]
-        embeds = embed.embed_documents(texts)
-        index.upsert(vectors=zip(ids, embeds, metadatas))
-        print("1 Upserted!")
+        SingleBatch.append({
+            "id" : str(uuid4()),
+            "metadata": chunk_metadata
+        })
+
+        batch_texts.append(text)
+        batch_metadatas.append(chunk_metadata)
+
+        if len(batch_texts) >= batch_limit:
+            print("\nLimit\n")
+            embeddings = get_embeddings(batch_texts)
+
+            for data, em in zip(SingleBatch, embeddings):
+                EmList = []
+                for em in list(em):
+                    EmList.append(float(em))
+                data["values"] = list(EmList)
+
+            BATCHES.append(SingleBatch)
+
+            SingleBatch = []
+            batch_texts, batch_metadatas = [], []
+
+
+    if len(batch_texts):
+        print("\nLimit Last\n")
+
+        embeddings = get_embeddings(batch_texts)
+
+        for data, em in zip(SingleBatch, embeddings):
+            EmList = []
+            for em in list(em):
+                EmList.append(float(em))
+            data["values"] = list(EmList)
+
+        BATCHES.append(SingleBatch)
+
+        SingleBatch = []
+        batch_texts, batch_metadatas = [], []
+
+
+    for batch in BATCHES:
+        print(batch)
+        index.upsert(vectors=batch)
+
+
+def create_gpt_question(query, Responses):
+
+    FinalMessage = f"Query: '{query}'\n\nContexts:\n\n\n"
+
+    for resp in Responses:
+        FinalMessage += f"Chunk: {resp['Source']}\n"
+        FinalMessage += f"Content: {resp['Text']}\n\n"
+        FinalMessage += f"---\n\n\n"
+
+    
+    return FinalMessage
+
+
+
+
+def ask_gpt(UserMessage, messages=None):
+
+    SYSTEM_MESSAGE = '''
+    REPLY AS A PYTHON DICTIONARY! 
+    You are a chat assistant that will create answers based on the information provided. 
+
+    The message will contain the Query, followed by the context. This will state the "chunk_num" followed by the chunk content. You will only use the information provided in these chunks/messages to create your response. You do not need to use all of the information provided, just what you think is relevant to the query. Do not add unnecessary details. You can also use markdown formatting if required for a better layout.
+    Your response should be in the form of a Python dictionary, with one key being "reply" with your response, and the other being "source" which will have a list as the value. This list should contain all the chunk numbers from which you used information/facts to formulate your answer. 
+    The response should look like this:
+    {"Reply": "Your answer here", "Source": [0.0, 1.0]} (This is just an example)
+    The user should be able to read that chunk to check the response.
+
+    If the context/information provided by the user does not have enough information related to the Query, you will respond stating that.
+
+    REPLY AS A PYTHON DICTIONARY!  USE MARKDOWN IF REQUIRED!
+
+
+    '''
+
+    messages = [
+        {"role": "system", "content": SYSTEM_MESSAGE},
+        {"role": "user", "content": UserMessage}
+    ]
+    
+    completion = openai.ChatCompletion.create(
+        model = "gpt-3.5-turbo",
+        messages = messages)
+    response_text = completion["choices"][0]["message"]["content"]
 
     
 
 
+    try:
+        response_dict = json.loads(response_text)
+        Reply = response_dict.get('Reply', None)
+        Source = response_dict.get('Source', None)
+    except json.JSONDecodeError:
+        Reply = response_text
+        Source = None
+
+    return Reply, Source
 
 
-
-
-# Main function to ingest text into Pinecone index
-def ingest_text(text, doc_name, cluster_name, index_name):
-    # Initialize Pinecone
+def query_index(query, cluster_name, index_name, filter=None, openSource=True):
     pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-    print("DONE")
 
-    # Check if the index already exists
-    print(pinecone.list_indexes())
-    if index_name not in pinecone.list_indexes():
-        # we create a new index
-        pinecone.create_index(
-            name=index_name,
-            metric='dotproduct',
-            dimension=1536  # 1536 dim of text-embedding-ada-002
-        )
-
-    # Connect to the index
-    index = pinecone.Index(index_name)
-
-    # Split the text into chunks
-    text_chunks = text_splitter.split_text(text)
-
-    batchSize = 10
-
-    texts, metadatas = [], []
-
-    metadata = {
-        "doc_name": doc_name,
-        "cluster_name": cluster_name
-    }
-
-    chunk_metadata = [{"text": chunk, "chunk_num": i, **metadata} for i, chunk in enumerate(text_chunks)]
-
-    texts.extend(text_chunks)
-    metadatas.extend(chunk_metadata)
-    batch_size_bytes =  get_size(metadatas)
-
-    if batch_size_bytes > 2*1024*800:  # 2MB limit:
-        print("1 upserting")
-        ids = [str(uuid4()) for _ in range(len(texts))]
-        embeds = embed.embed_documents(texts)
-        print(f"SIZE: {get_size(str(ids)) + get_size(str(embeds)) + get_size(str(metadatas))}")
-        print("SLEEPINGGGGGGGGGGGGGGGGG")
-        time.sleep(3)
-        index.upsert(vectors=zip(ids, embeds, metadatas))
-        texts = []
-        metadatas = []
-        print("1mupserted")
     
-    if len(texts) > 0:
-        print("upserting")
-        ids = [str(uuid4()) for _ in range(len(texts))]
-        embeds = embed.embed_documents(texts)
-        index.upsert(vectors=zip(ids, embeds, metadatas))
-        print("upserted")
-
-
-def query_index(query, cluster_name, index_name, metadata=None):
-    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-
     text_field = "text"
     index = pinecone.Index(index_name)
 
-    vectorstore = Pinecone.from_existing_index(index_name, embed)
-    response = vectorstore.similarity_search(
-        query,  # our search query
-    )
-    for res in response:
-        print(f"Chunk: {res.metadata['chunk']}")
-        print(f"Content:\n{res.page_content}")
-        print("\n---\n")
+    Responses = []
+
+
     
+    if openSource:
+
+        response = index.query(
+        top_k=3,
+        include_values=False,
+        include_metadata=True,
+        vector=get_query_embeddings(query),
+        filter={}
+    )
+        
+        for match in (response["matches"]):
+            source = (match["metadata"]["chunk"])
+            doc_name = (match["metadata"]["doc_name"])
+            text = (match["metadata"]["text"])
+
+            Responses.append({"Source" : source, "Doc": doc_name, "Text": text})
+
+        return create_gpt_question(query, Responses)
+          
+    else:
+        vectorstore = Pinecone.from_existing_index(index_name, embed)
+        
+        response = vectorstore.similarity_search(
+            query,  # our search query
+        )
+        for res in response:
+            print(f"Chunk: {res.metadata['chunk']}")
+            print(f"Content:\n{res.page_content}")
+        
     print("_"*200)
 
 
 
+def get_answer(query):
+    user_message = query_index(query, "Trials", "open-source-index")
+    proper_response = ask_gpt(user_message)
 
-input_file1 = 'Book 3 - The Prisoner of Azkaban.txt' 
-input_file = 'textDocs/' + input_file1
+    return proper_response
 
-with open(input_file, "rb") as f:
-    encoding = chardet.detect(f.read())["encoding"]
-with open(input_file, "r", encoding=encoding) as f:
-    txt = f.read()
-    upsert_vecs(txt, input_file1, "Trials", "test-index")
-
-
-
-question = "Who is Harry?"
-query_index(question, "Trials", "test-index")
-
-
-system_message = '''
-REPLY AS A PYTHON DICTIONARY! 
-You are a chat assistant that will create answers based on the information provided. 
-
-The message will contain the Query, followed by the context. This will state the "chunk_num" followed by the chunk content. You will only use the information provided in these chunks/messages to create your response. You do not need to use all of the information provided, just what you think is relevant to the query. Do not add unnecessary details. You can also use markdown formatting if required for a better layout.
-Your response should be in the form of a Python dictionary, with one key being "reply" with your response, and the other being "source" which will have a list as the value. This list should contain all the chunk numbers from which you used information/facts to formulate your answer. 
-The response should look like this:
-{"Reply": "Your answer here", "Source": [0.0, 1.0]} (This is just an example)
-The user should be able to read that chunk to check the response.
-
-If the context/information provided by the user does not have enough information related to the Query, you will respond stating that.
-
-REPLY AS A PYTHON DICTIONARY! 
-
-
-'''
