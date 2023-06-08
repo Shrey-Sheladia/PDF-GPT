@@ -207,7 +207,7 @@ def ask_gpt(UserMessage, messages=None):
     
     completion = openai.ChatCompletion.create(
         model = "gpt-3.5-turbo",
-        messages = messages)
+        messages = messages,)
     response_text = completion["choices"][0]["message"]["content"]
 
     
@@ -218,6 +218,7 @@ def ask_gpt(UserMessage, messages=None):
         Reply = response_dict.get('Reply', None)
         Source = response_dict.get('Source', None)
     except json.JSONDecodeError:
+        print("JSON Decode Error")
         Reply = response_text
         Source = None
 
@@ -273,4 +274,26 @@ def get_answer(query):
     proper_response = ask_gpt(user_message)
 
     return proper_response
+
+input_file1 = 'Book 5 - The Order of the Phoenix.txt' 
+input_file = 'textDocs/' + input_file1
+
+
+# input("Upsert? >")
+# upsert_text(input_file, "Trials", "open-source-index")
+
+question = ""
+
+while question.lower() != "q":
+    question = input("Ask a question> ")
+    if question.lower() == "q":
+        break
+
+
+    print("\n\nResponse:\n")
+    try:
+        print(get_answer(question))
+    except Exception as e:
+        print(str(e))
+
 
